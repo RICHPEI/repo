@@ -34,6 +34,8 @@ def setup_logging(
     handlers: List[logging.Handler] = [logging.StreamHandler(sys.stdout)]
 
     if log_file:
+        # 確保日誌檔案的目錄存在
+        log_file.parent.mkdir(parents=True, exist_ok=True)
         handlers.append(logging.FileHandler(log_file, encoding='utf-8'))
 
     logging.basicConfig(
