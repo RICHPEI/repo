@@ -57,6 +57,8 @@ jobs:
             messages: [{role:"user", content:$p}]
           }' > payload.json
 
+          echo "KEY_LEN=${#ANTHROPIC_API_KEY}"
+
           curl -sS https://api.anthropic.com/v1/messages \
             -H "x-api-key: '"$ANTHROPIC_API_KEY"'" \
             -H "anthropic-version: 2023-06-01" \
