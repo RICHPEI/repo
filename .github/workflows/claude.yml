@@ -15,11 +15,10 @@ jobs:
 
     steps:
       - name: Read issue and comment
-        id: read
         run: |
           python <<'PY'
           import json, os
-          event = json.load(open(os.environ["GITHUB_EVENT_PATH"]))
+          event = json.load(open(os.environ["GITHUB_EVENT_PATH"], "r", encoding="utf-8"))
           issue = event["issue"]
           comment = event["comment"]
 
@@ -43,59 +42,79 @@ jobs:
           4. POST /api/auth/login 呼叫範例
           5. 基本錯誤處理
           """
-
           open("prompt.txt","w",encoding="utf-8").write(prompt)
           PY
 
-- name: Call Claude API
-  env:
-    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-  run: |
-    set -euo pipefail
-    echo "KEY_LEN=${#ANTHROPIC_API_KEY}"
+      - name: Call Claude API
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
 
-    # 建 payload（用你前面產出的 prompt.txt）
-    python - <<'PY'
-    import json
-    prompt = open("prompt.txt","r",encoding="utf-8").read()
-    payload = {
-      "model": "claude-3-5-sonnet-20241022",
-      "max_tokens": 800,
-      "messages": [{"role":"user","content": prompt}]
-    }
-    open("payload.json","w",encoding="utf-8").write(json.dumps(payload, ensure_ascii=False))
-    PY
+          # 確認有帶到 secret（不外洩內容）
+          echo "KEY_LEN=${#ANTHROPIC_API_KEY}"
+          echo -n "$ANTHROPIC_API_KEY" | sha256sum | awk '{print "KEY_SHA256="$1}'
 
-    # 呼叫 API（注意：這裡全部用雙引號）
-    curl -sS https://api.anthropic.com/v1/messages \
-      -H "content-type: application/json" \
-      -H "anthropic-version: 2023-06-01" \
-      -H "x-api-key: ${ANTHROPIC_API_KEY}" \
-      -d @payload.json > response.json
+          # 清掉可能的換行/CR（很多人是複製貼上帶到）
+          ANTHROPIC_API_KEY="$(printf "%s" "$ANTHROPIC_API_KEY" | tr -d '\r\n')"
 
-    echo "=== response.json ==="
-    cat response.json
-    echo "=== end response.json ==="
+          python - <<'PY'
+          import json
+          prompt = open("prompt.txt","r",encoding="utf-8").read()
+          payload = {
+            "model": "claude-3-5-sonnet-20241022",
+            "max_tokens": 800,
+            "messages": [{"role":"user","content": prompt}]
+          }
+          open("payload.json","w",encoding="utf-8").write(json.dumps(payload, ensure_ascii=False))
+          PY
 
-    # 解析成功回覆；如果是 error 就直接印出並退出
-    python - <<'PY'
-    import json, sys
-    r = json.load(open("response.json","r",encoding="utf-8"))
-    if r.get("type") == "error":
-      print("Claude API error:", r)
-      sys.exit(1)
-    text = r["content"][0]["text"]
-    open("answer.txt","w",encoding="utf-8").write(text)
-    PY
+          curl -sS https://api.anthropic.com/v1/messages \
+            -H "content-type: application/json" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+            -d @payload.json > response.json
 
+          echo "=== response.json ==="
+          cat response.json
+          echo "=== end response.json ==="
+
+          python - <<'PY'
+          import json, sys
+          r = json.load(open("response.json","r",encoding="utf-8"))
+          if r.get("type") == "error":
+            print("Claude API error:", r)
+            sys.exit(1)
+          text = r["content"][0]["text"]
+          open("answer.txt","w",encoding="utf-8").write(text)
+          PY
 
       - name: Reply to GitHub Issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BODY=$(cat answer.txt | jq -Rs .)
-          curl -sS -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
-            -d "{\"body\":$BODY}"
+          python - <<'PY'
+          import json, os, urllib.request
+          repo = os.environ["GITHUB_REPOSITORY"]
+          issue_number = os.environ["GITHUB_EVENT_PATH"]
+
+          event = json.load(open(issue_number, "r", encoding="utf-8"))
+          num = event["issue"]["number"]
+
+          body = open("answer.txt","r",encoding="utf-8").read()
+          data = json.dumps({"body": body}).encode("utf-8")
+
+          req = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/issues/{num}/comments",
+            data=data,
+            headers={
+              "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+              "Accept": "application/vnd.github+json",
+              "Content-Type": "application/json",
+              "User-Agent": "github-actions"
+            },
+            method="POST"
+          )
+          with urllib.request.urlopen(req) as resp:
+            print("Posted comment:", resp.status)
+          PY
