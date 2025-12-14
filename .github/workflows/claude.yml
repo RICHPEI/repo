@@ -1,0 +1,82 @@
+name: Claude on Issue Comment
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  claude:
+    if: contains(github.event.comment.body, '@claude')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Read issue and comment
+        id: read
+        run: |
+          python <<'PY'
+          import json, os
+          event = json.load(open(os.environ["GITHUB_EVENT_PATH"]))
+          issue = event["issue"]
+          comment = event["comment"]
+
+          prompt = f"""
+          你是一位資深前端工程師，請根據以下 GitHub Issue 與留言，
+          產出可實作的 React + TypeScript + Tailwind CSS 登入功能。
+
+          【Issue 標題】
+          {issue["title"]}
+
+          【Issue 描述】
+          {issue.get("body","")}
+
+          【使用者留言】
+          {comment["body"]}
+
+          請提供：
+          1. 元件結構說明
+          2. React + TypeScript 程式碼範例
+          3. JWT 登入流程說明
+          4. POST /api/auth/login 呼叫範例
+          5. 基本錯誤處理
+          """
+
+          open("prompt.txt","w",encoding="utf-8").write(prompt)
+          PY
+
+      - name: Call Claude API
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          jq -n --arg p "$(cat prompt.txt)" '{
+            model: "claude-3-5-sonnet-20240620",
+            max_tokens: 800,
+            messages: [{role:"user", content:$p}]
+          }' > payload.json
+
+          curl -sS https://api.anthropic.com/v1/messages \
+            -H "x-api-key: '"$ANTHROPIC_API_KEY"'" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d @payload.json > response.json
+
+          python <<'PY'
+          import json
+          r = json.load(open("response.json"))
+          text = r["content"][0]["text"]
+          open("answer.txt","w",encoding="utf-8").write(text)
+          PY
+
+      - name: Reply to GitHub Issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BODY=$(cat answer.txt | jq -Rs .)
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
+            -d "{\"body\":$BODY}"
