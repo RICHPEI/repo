@@ -47,35 +47,47 @@ jobs:
           open("prompt.txt","w",encoding="utf-8").write(prompt)
           PY
 
-      - name: Call Claude API
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          jq -n --arg p "$(cat prompt.txt)" '{
-            model: "claude-3-5-sonnet-20240620",
-            max_tokens: 800,
-            messages: [{role:"user", content:$p}]
-          }' > payload.json
+- name: Call Claude API
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  run: |
+    set -euo pipefail
+    echo "KEY_LEN=${#ANTHROPIC_API_KEY}"
 
-          echo "KEY_LEN=${#ANTHROPIC_API_KEY}"
+    # 建 payload（用你前面產出的 prompt.txt）
+    python - <<'PY'
+    import json
+    prompt = open("prompt.txt","r",encoding="utf-8").read()
+    payload = {
+      "model": "claude-3-5-sonnet-20241022",
+      "max_tokens": 800,
+      "messages": [{"role":"user","content": prompt}]
+    }
+    open("payload.json","w",encoding="utf-8").write(json.dumps(payload, ensure_ascii=False))
+    PY
 
-          curl -sS https://api.anthropic.com/v1/messages \
-            -H "x-api-key: '"$ANTHROPIC_API_KEY"'" \
-            -H "anthropic-version: 2023-06-01" \
-            -H "content-type: application/json" \
-            -d @payload.json > response.json
-          
-          echo "=== response.json ==="
-          cat response.json
-          echo "=== end response.json ==="
+    # 呼叫 API（注意：這裡全部用雙引號）
+    curl -sS https://api.anthropic.com/v1/messages \
+      -H "content-type: application/json" \
+      -H "anthropic-version: 2023-06-01" \
+      -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+      -d @payload.json > response.json
 
+    echo "=== response.json ==="
+    cat response.json
+    echo "=== end response.json ==="
 
-          python <<'PY'
-          import json
-          r = json.load(open("response.json"))
-          text = r["content"][0]["text"]
-          open("answer.txt","w",encoding="utf-8").write(text)
-          PY
+    # 解析成功回覆；如果是 error 就直接印出並退出
+    python - <<'PY'
+    import json, sys
+    r = json.load(open("response.json","r",encoding="utf-8"))
+    if r.get("type") == "error":
+      print("Claude API error:", r)
+      sys.exit(1)
+    text = r["content"][0]["text"]
+    open("answer.txt","w",encoding="utf-8").write(text)
+    PY
+
 
       - name: Reply to GitHub Issue
         env:
