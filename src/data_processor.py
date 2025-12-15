@@ -38,8 +38,19 @@ def load_excel_data(file_path: Path) -> pd.DataFrame:
     validate_file_path(file_path, must_exist=True)
 
     try:
-        # 讀取 Excel 資料（效能最佳化：指定引擎）
-        data_frame = pd.read_excel(file_path, engine='openpyxl')
+        # 根據副檔名選擇適當的引擎
+        file_suffix = file_path.suffix.lower()
+        if file_suffix == '.xls':
+            logging.debug("偵測到 .xls 格式，使用 xlrd 引擎")
+            data_frame = pd.read_excel(file_path, engine='xlrd')
+        elif file_suffix in ['.xlsx', '.xlsm']:
+            logging.debug(f"偵測到 {file_suffix} 格式，使用 openpyxl 引擎")
+            data_frame = pd.read_excel(file_path, engine='openpyxl')
+        else:
+            raise ValueError(
+                f"不支援的檔案格式：{file_suffix}\n"
+                f"支援的格式：.xlsx, .xlsm, .xls"
+            )
 
         # 驗證資料不為空
         if data_frame.empty:
