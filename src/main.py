@@ -44,9 +44,15 @@ def main() -> int:
         logging.info("資料清洗程式 v2.0 開始執行")
         logging.info("=" * 70)
 
-        # 轉換路徑為 Path 物件
-        input_path = Path(args.input)
-        output_path = Path(args.output)
+        # 轉換路徑為 Path 物件並解析為絕對路徑
+        input_path = Path(args.input).resolve()
+        output_path = Path(args.output).resolve()
+
+        # 檢查輸入和輸出檔案是否相同
+        if input_path == output_path:
+            logging.error("錯誤：輸入和輸出檔案不能相同")
+            logging.error("這會導致原始資料被覆蓋，請指定不同的輸出檔案")
+            return 1
 
         logging.info(f"輸入檔案：{input_path.absolute()}")
         logging.info(f"輸出檔案：{output_path.absolute()}")
